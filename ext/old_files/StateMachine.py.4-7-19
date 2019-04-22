@@ -1,0 +1,313 @@
+import numpy as np
+from numpy.linalg import inv
+import time
+
+class StateMachine(object):
+
+  def __init__(self,num_switches=2,num_hosts=4):
+
+    # The number of hosts and switches -- this needs to change with the example case
+    # This is metadata
+    self.num_switches = num_switches
+    self.num_hosts = num_hosts
+    self.stateCovarMult = 0.001
+    self.measCovarMult = 0.001
+    self.processNoiseMult = 0.01
+
+    # The time counter which should get updated each timestep
+    # Just be sure to get current time before taking any time difference
+    self.prev_time = time.time()
+    self.curr_time = self.prev_time + 1
+    
+    # The state vector in the order of flows and then measured switch stats
+    # This state vector counts from src = host 1 -> dst = host 2 <-> n then so forth
+    self.num_flows = self.num_hosts * (self.num_hosts - 1)
+    self.num_meas = self.num_switches * self.num_flows
+    
+    # The switch stats is the measured flow stats for each switch
+    # Indexing this will be something to be cautious of
+    # The size is the number of flows and the number of measurements which is a flow at each switch
+    self.size_state_vec = self.num_flows * (self.num_switches + 1)
+
+    # This below is the state vector for the system
+    # I think this is enough initialization
+    # Equation 5b
+    # This is the s vector
+    self.StateVec = np.zeros((self.size_state_vec, 1))
+
+    # This below is the state covariance matrix
+    # I think this is sufficient for now -- can revisit later
+    # This is the P matrix
+    self.StateCovar = np.ones((self.size_state_vec,self.size_state_vec))
+    self.StateCovar *= self.stateCovarMult
+
+    # This is the Q term or known as process noise
+    # This is the Q matrix
+    self.ProcessNoise = np.ones((self.size_state_vec,self.size_state_vec))
+    self.ProcessNoise *= self.processNoiseMult
+
+    # This below is the state transition matrix
+    # This allows the computation of the predicted measurements using the estimated flow rates
+    # Need to build A array to reflect the routing of the network
+    #self.StateTrans = np.zeros((self.size_state_vec, self.size_state_vec))
+    # This is the F matrix
+    self.InitStateTrans()
+
+    # This below is the Measurement Noise Covar matrix
+    # Initializes the R matrix
+    self.MeasCovar = np.eye(self.num_meas,self.num_meas)
+    self.MeasCovar *= 0.001  
+
+    # This below is the Measurement matrix
+    #self.MeasMatrix = zeros((self.num_meas,self.size_state_vec))
+    # Initializes the H matrix
+    self.InitMeasMatrix()
+
+    # This below is the Gain Matrix
+    # This is the G matrix
+    #self.Gains = np.zeros((self.size_state_vec,self.size_state_vec))
+    self.Gains = np.zeros((self.size_state_vec,self.num_meas))
+    
+    # This is the measurement vector -- the measurements received from the query
+    # This is the z vector
+    self.MeasVector = np.zeros((self.num_meas,1))
+
+    # Initialize this but don't likely need this since it will get updated the first iteration
+    # This is the output of Equation 11
+    self.StatePrediction = np.zeros((self.size_state_vec,1))
+
+ # --------------------------------------------------------------------------------------------
+ # --------------------------------------------------------------------------------------------
+ # Start State initialization functions here --------------------------------------------------
+ # --------------------------------------------------------------------------------------------
+ # --------------------------------------------------------------------------------------------
+
+  # This routine initializes the state transition function
+  # This array is in the form of [[C 0],[A I]] where C => num_flow by num_flow
+  # The upper right zero array should size num_flow by num_meas
+  # Equation 5a
+  def InitStateTrans(self):
+     # initialize upper left to an eye matrix of size c
+     Carray = np.eye(self.num_flows)
+     ZeroArray = np.zeros((self.num_flows,self.num_meas))
+     # TODO:  The A array needs to know the routing map of the network
+     # This needs to work with the routing code so when a flow is first installed in a switch
+     # to add a term to this array
+     # Ideally, set this to all zeros initially and then get this from the switch object 
+     Aarray = np.ones((self.num_meas, self.num_flows))
+     IdenArray = np.eye(self.num_meas)
+     comp1 = np.concatenate((Carray, ZeroArray), axis=1)
+     comp2 = np.concatenate((Aarray, IdenArray), axis=1)
+     self.StateTrans = np.concatenate((comp1,comp2),axis=0)
+
+  # This routine needs to be able to receive a routing matrix since it needs to be defined
+  # externally from the routing service
+  # The route matrix is inserted into the transition matrix and the transition matrix is updated
+  # Basically, it is the same as above with route matrix info
+  def DefineRoutingMatrix(self, route_matrix):
+     Carray = np.eye(self.num_flows)
+     ZeroArray = np.zeros((self.num_flows,self.num_meas))
+     # Insert the correct routing matrix into the state transition matrix
+     Aarray = route_matrix
+     IdenArray = np.eye(self.num_meas)
+     comp1 = np.concatenate((Carray, ZeroArray), axis=1)
+     comp2 = np.concatenate((Aarray, IdenArray), axis=1)
+     self.StateTrans = np.concatenate((comp1,comp2),axis=0)
+
+
+  # This routine initializes the measurement matrix
+  # Equation 7 -- I believe this is unchanging
+  def InitMeasMatrix(self):
+     # initialize upper left to an eye matrix of size c
+     ZeroArray = np.zeros((self.num_meas,self.num_flows))
+     IdenArray = np.eye(self.num_meas)
+     self.MeasMatrix = np.concatenate((ZeroArray,IdenArray),axis=1)
+
+  # This routine will calculate the time compensated tranistion matrix
+  def TimeCompTransMatrix(self, time_diff):
+    
+
+ # ------------------------------------------------------------------------------------------
+ # ------------------------------------------------------------------------------------------
+ # End State initialization functions here --------------------------------------------------
+ # ------------------------------------------------------------------------------------------
+ # ------------------------------------------------------------------------------------------
+
+ # ------------------------------------------------------------------------------------------
+ # ------------------------------------------------------------------------------------------
+ # Start State equations here ---------------------------------------------------------------
+ # ------------------------------------------------------------------------------------------
+ # ------------------------------------------------------------------------------------------
+
+  # Equation 11 -- Predict State Vector
+  def PredictState(self):
+    time_diff = self.curr_time - self.prev_time
+    scaledStateTrans = self.StateTrans * time_diff
+    self.StatePrediction = np.dot(scaledStateTrans,self.StateVec)
+
+  # Equation 12 -- Update State Covariance
+  def PredictCovar(self):
+    time_scale = self.curr_time - self.prev_time
+    StateTrans = self.StateTrans * time_scale
+    temp = np.dot(self.StateCovar,StateTrans.T)
+    temp = np.dot(StateTrans,temp)
+    self.StateCovar = temp + self.ProcessNoise
+    
+  # Equation 13 -- Update Gains
+  def UpdateGains(self):
+     # This is also the numerator
+     temp = np.dot(self.StateCovar, self.MeasMatrix.T)
+     numer = temp
+     # This calculates the denominator
+     temp1 = np.dot(self.MeasMatrix, temp)
+     temp2 = self.MeasCovar + temp1
+     denom = inv(temp2)
+     self.Gains = np.dot(numer,denom)
+
+  # Equation 14 -- Update State Vector
+  def UpdateStateVector(self):
+     temp = np.dot(self.MeasMatrix, self.StatePrediction)
+     temp2 = self.MeasVector - temp
+     temp3 = np.dot(self.Gains, temp2)
+     self.StateVec = self.StatePrediction + temp3
+
+  # Equation 15 -- Update State Covariance
+  def UpdateStateCovar(self):  
+     Ivec = np.eye(self.size_state_vec,self.size_state_vec)
+     temp = np.dot(self.Gains, self.MeasMatrix)
+     temp2 = Ivec - temp
+     self.StateCovar = np.dot(temp, self.StateCovar)
+
+ # -----------------------------------------------------------------------------
+ # -----------------------------------------------------------------------------
+ # End State equations here ----------------------------------------------------
+ # -----------------------------------------------------------------------------
+ # -----------------------------------------------------------------------------
+
+ # ------------------------------------------------------------------------------------------
+ # ------------------------------------------------------------------------------------------
+ # Start Main Methods here ---------------------------------------------------------------
+ # ------------------------------------------------------------------------------------------
+ # ------------------------------------------------------------------------------------------
+  
+
+    
+
+  # This routine updates the time based on "clock" time
+  def UpdateTime(self):
+    self.prev_time = self.curr_time
+    self.curr_time = time.time()
+
+  # This routine updates the time based on sim time
+  def FixTime(self, man_time):
+    self.prev_time = self.curr_time
+    self.curr_time = man_time
+
+  # This routine init the time based on sim time
+  def InitFixTime(self, man_time):
+    self.prev_time = man_time
+    self.curr_time = man_time
+
+  # This routine receives the measured bytes each switch to update the measurement vector
+  # The ordering of the measured Values will be a list from 1 -> 2,n, 2 -> 1,n ... n-1 -> 1,n
+  def UpdateMeasurements(self, measVals, switchNo = 1, numHosts = 8):
+    # Calculate starting position of measured values vector
+    startIndex = (switchNo * self.num_flows) - 1
+    # Loop over measVals and insert into measured values
+    for i in range(self.num_flows):
+      self.MeasVector[i + startIndex,1] = measVals[i,1]
+
+  def Update(self, set_time=False, fixed_time=0.0):
+    # first update the time for the correct time difference amount
+    if set_time:
+      self.FixTime(fixed_time)
+    else:
+      self.UpdateTime()
+
+    # Calculate Eq 11
+    self.PredictState()
+
+    # Calculate Eq 12
+    self.PredictCovar()
+
+    # Calculate Eq 13
+    self.UpdateGains()
+
+    # Calculate Eq 14
+    self.UpdateStateVector()
+
+    # Calculate Eq 15
+    self.UpdateStateCovar()
+
+    # Clear the measurement vector
+    self.MeasVector = np.zeros((self.num_meas,1))
+
+  # This outputs the state vector to a file output for later post-processing
+  # TODO:  Finish this method up
+  def OutputStateResult(self, file):
+    pass
+
+  # This outputs the state vector to a file output for later post-processing
+  def ReturnStateResult(self):
+    return self.StateVec
+
+ # -----------------------------------------------------------------------------
+ # -----------------------------------------------------------------------------
+ # End Main Methods here ----------------------------------------------------
+ # -----------------------------------------------------------------------------
+ # ----------------------------------------------------------------------------- 
+
+ # -----------------------------------------------------------------------------
+ # -----------------------------------------------------------------------------
+ # helper functions below ---------------------------------------------
+ # -----------------------------------------------------------------------------
+ # -----------------------------------------------------------------------------
+
+  # This computes the index into the measurement vector
+  def ComputeMeasIndex(self,flow_num, switch_num):
+    return flow_num + switch_num * self.num_flows 
+
+  # This updates the measurement vector  
+  def UpdateMeasurement(self,flow_num, switch_num, measurement):
+#    if switch_num < 1:
+#      print "invalid switch num %i " %switch_num
+    self.MeasVector[flow_num + (switch_num - 1) * self.num_flows] = measurement
+
+  def ComputeFlowNum(self,host_src, host_dst):
+    temp = 1
+    count = self.num_hosts + 1
+    for i in range(1,count):
+        for j in range(1,count):
+            if i == j:
+                pass
+            elif i == host_src and j == host_dst:
+                return temp
+            else:
+                temp += 1
+
+# This is the case of a simple one switch and two cost topology
+# The routing matrix should be a simple 2x2 identity matrix
+def CalculateSimpleTopo():
+  return np.eye(2)
+  
+
+# The purpose of this is to debug the Kalman filtering
+if __name__ == '__main__':
+  # This initializes the simpliest meaningful case
+  noSwitches = 1
+  noHosts = 2 
+  s = StateMachine(num_switches=noSwitches,num_hosts=noHosts)
+  print("State machine created with " + str(noSwitches) + " switches and " + str(noHosts) + " hosts")
+  s.InitFixTime(0.0)
+  print("Time initialized")
+  s.DefineRoutingMatrix(CalculateSimpleTopo())
+  print("Proper Routing Matrix installed")
+  print ("The current state transition matrix is ")
+  print (s.StateTrans)
+  
+ 
+
+  
+  
+  
+    

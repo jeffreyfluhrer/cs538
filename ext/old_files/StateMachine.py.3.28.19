@@ -1,0 +1,70 @@
+import numpy as np
+
+class StateMachine(object):
+
+  def __init__(self):
+    # The time counter which should get updated each timestep
+    self.prev_time = 0.0
+    self.curr_time = 0.0
+    # The number of hosts and switches -- this needs to change with the example case
+    self.num_switches = 2
+    self.num_hosts = 4
+    # The state vector in the order of flows and then measured switch stats
+    # This state vector counts from src = host 1 -> dst = host 2 <-> n then so forth
+    self.num_flows = self.num_hosts * (self.num_hosts - 1)
+    self.num_meas = self.num_switches * self.num_hosts
+    # The switch stats is the measured flow stats for each switch
+    # Indexing this will be something to be cautious of
+    self.size_state_vec = self.num_flows * (self.num_switches + 1)
+
+    # This below is the state vector for the system
+    # I think this is enough initialization
+    self.StateVec = np.zeros(self.size_state_vec, 1)
+
+    # This below is the state covariance matrix
+    # I think this is sufficient for now -- can revisit later
+    self.StateCovar = np.ones(self.size_state_vec, self.size_state_vec)
+    self.StateCovar *= 0.001
+
+    # This below is the state transition matrix
+    # TODO:  This is definitely not enough
+    self.StateTrans = np.zeros(self.size_state_vec, self.size_state_vec)
+    InitTrans()
+
+    # This below is the Measurement Noise Covar matrix
+    self.MeasCovar = ones(self.num_meas,self.num_meas)
+
+    # This below is the Measurement matrix
+    self.MeasMatrix = zeros(self.num_meas,self.size_state_vec)
+
+    # This below is the Gain Matrix
+    self.Gains = zeros(self.size_state_vec,1)
+    
+    # This is the measurement vector -- the measurements received from the query
+    self.MeasVector = zeros(self.num_meas,1)
+
+  # TODO:  This routine initializes the state transition function
+  def InitTrans():
+      pass
+
+  # helper functions below
+  def ComputeFlowNum(host_src, host_dst):
+    temp = 1
+    count = self.num_hosts + 1
+    for i in range(1,count):
+        for j in range(1,count):
+            if i == j:
+                pass
+            elif i == host_src and j == host_dst:
+                return temp
+            else:
+                temp += 1
+
+  # This computes the index into the measurement vector
+  def ComputeMeasIndex(flow_num, switch_num):
+    return flow_num + switch_num * self.num_flows 
+
+  # This updates the measurement vector  
+  def UpdateMeasurement(flow_num, switch_num, measurement):
+    self.MeasVector[flow_num + (switch_num - 1) * self.num_flows,1] = measurement 
+    
