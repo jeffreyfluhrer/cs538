@@ -1,0 +1,125 @@
+Notes on Kalman filtering project by Jeffrey Fluhrer for CS 538
+
+A.  How to run simulation currently:
+
+1.  Start the controller.  (Go to the pox directory and type Kalm)
+	- Currently this runs the l2_learning switch controller and a Kalman filter.
+
+2.  Start the network.  (Open a terminal window and type netSet3)
+	This is a mininet topology with 4 linear switches connected to 2 hosts each.
+
+3.  To begin a flow, type iperf on both the client and the server with the appropriate arguments
+	This requires a change to how mininet is run in order to make this more efficient.
+
+4.  Be sure to always perform a clean-up after using mininet.  This prevents link issues on next startup.
+
+
+
+B.  Running mininet with iperf automatically -- essentially working
+
+1.  Created a directory named minitest with some test cases inside
+
+2.  Created a file named SimpleTest4.  To run it type:  sudo python SimpleTest4.py
+
+3.  This can be modified to perform the required iperf to stimulate the network.  
+    Need to place sleeps in this to perform delays. - done
+
+
+
+C.  Begin working more on the controller:
+
+1.  Understand flow monitoring and make sure a flow can be saved to a file.
+	- I was able to sift for a TM and output to file.
+	- Turned this into a method to be used or modified later
+	- The flow monitor program is stored in Kalman3.py
+
+2.  Begin working on the Kalman filter portion and seeing that the equations are modeled up
+	- The code for modeling the Kalman filter is located in the StateMachine.py file
+	- I think the basic code this there.  TODO:  Need to add a local main to perform internal debugging and testing
+        - If I feel frisky later, rename the variables to more canonical Kalman equation symbols
+
+3.  Begin to integrate the Kalman filer with the monitor code.
+	- Not working right off the bat -- surpise, surprise.
+	- First thing to try, add code to the StateMachine.py code for unit testing
+        - New way of dealing with state transition matrix, set the routing matrix and call calculate
+          trans matrix whenever it is needed to apply time diff.
+	- Made it first pass through the StateMachine and so far so good
+	- Integrated l3_learning_mon.py with the Kalma4.py monitor code to allow the router to talk to the monitor.
+        - Next thing is to integrate the flow rule generation to generate a proper A matrix.(done, needs checked)
+        - Need to clean up comments
+        - Check to see if the routing matrix is correct
+
+4.  Current State of System:
+	- ./pox.py l3_learning_mon runs the system forwarding and the monitor code
+	- sudo python SimpleTest4.py runs the mininet (or TwoHostOneSwitch.py)
+        - Need to check the Kalman4.py settings to see the settings on the number of hosts and switches 
+	- Need to do the following:
+		- Check to see if the routing matrix is correct -- so far so good
+		- Need to find out why the gains are not corect -- gains are working better but not perfect
+		- Need to tweak for better outputing for reporting
+		- Gains are better -- The process noise upper right terms needed a bit of a tweak.
+	- Code clean-up needed here:
+		a.  define initialization of measurement noise and process noise better. -- done
+		b.  construct system for recording data. -- done - records time and flow rates
+		c.  construct a better system for setting up more complex tests.
+			- Note:  iperf seems to be backward on sender and receiver when specifying
+			- Needed to change how iperf is run.  Using sendCmd() now.
+	- To output the time and flow to an external file use the following command: 
+		- ./pox.py l3_learning_mon --output=<output file location>
+	- Need to take some data and show how this works for 3-6 cases and plot the data before begin experimenting with
+	the covariances and partial observations.
+		- Test 1:
+			- 3 independent,sequential flows: h1->h2 (10k), h3->h6 (10k), h5->h7 (10k)
+			- Command for running controller:
+			./pox.py l3_learning_mon --output=/home/jeffrey/minitest/Test1_Result1 --flows=0,18,33
+		- Test 2:
+			- 2 parallel flow sets: h1->h3 (10k) and h1->h5 (10k) 
+						h6->h8 (10k) and h2->h8 (10k)
+			./pox.py l3_learning_mon --output=/home/jeffrey/minitest/Test2_Result1 --flows=1,3,50,54
+		- Test 3: 
+			- 2 independent, sequential and one parallel flow simultaneously:
+						h1->h2 (10k)
+						h4->h3 (10k) and h4->h5 (10k)
+						h7->h8 (10k)
+			./pox.py l3_learning_mon --output=/home/jeffrey/minitest/Test3_Result1 --flows=0,24,25,49
+	- Need to improve the manner in which data is saved.  Specify flow to save which is only save those flows.
+          Also, save the measurements for those flows alongside the estimated flow rates to be able to back compute. (done)
+	- Results so far look off scale but otherwise of the correct shape...encouraging.
+	- Fixed two bugs in the filter code but the gains are still getting bigger than unity.
+
+	- Adding switch selection
+		- Adding CalculateHbyEntropy(self) that performs the algorithm
+		- Adding EstimateEntropy(self, Htilde) that calculates the entropy of the new measurement matrix
+		- Adding AddSwitch2Measurement that adds switch flows to add measurement by a switch
+		- Adding CalculateG(self, Htilde) that calculates new gain for a proposed measurement matrix
+		- Adding CalculateP(self, Gmod, Htilde) that calculates new covariance for a proposed meas matrix and gain
+		- Added this to the Kalman code and debugged it for simple issues.	
+		- Roughly working for test case but haven't checked results.
+		- Add a command line specifier to toggle switch selection
+		- new start-up command for tests. e.g.:
+			./pox.py l3_learning_mon --output=/home/jeffrey/minitest/Test3_Result1 --flows=1,24,25,49 --ss=False
+		- (TODO) Need to debug the switch selection and determine why the determinant is a problem sometimes
+	- Adding automatic plotting for quicker analysis of results
+		- Roughed out but will need more work later
+		- Added this to the Test1 code to plot results after 
+	- (TODO):  Something is screwed up with measurement -- Needs addressed immediately
+	- Performed clamping on gains
+	- Seemingly fixed my problem by restoring CompensateGains
+	- Upcoming improvements
+		- Initialize State Covariance to Initial Process Noise
+		- Determine if both the state transition matrix and the gains need to be compensated for delta t
+		- Note that the process noise should have a time dependency (started multiplying Q by delta t)
+		- Add calculation of covariance matrix of state vector
+			- Create a zeroed array for storing past state vectors
+			- Initialize an index value for storing next value to replace
+			- Store latest state variable at index value and advance index by one with wrap.
+			- When the first set of state variables are stored, begin to compute covariance matrix
+				- First compute mean for each state value and store in mean vector
+				- Use means and state matrix to compute state covariance.
+				- Need to be clever here and check if sum is less than small value and don't compute
+				- Use state covariance to estimate process noise
+				- 
+ 
+
+
+
