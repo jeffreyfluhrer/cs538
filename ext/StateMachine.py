@@ -139,6 +139,7 @@ class StateMachine(object):
     # This is the measurement vector -- the measurements received from the query
     # This is the z vector
     self.z = np.zeros((self.num_meas,1))
+    self.prev_z = np.zeros((self.num_meas,1))
 
     # Initialize this but don't likely need this since it will get updated the first iteration
     # This is the output of Equation 11
@@ -310,6 +311,12 @@ class StateMachine(object):
      #self.GainScale()
      # TODO:  Loop over all gain terms and limit them between 0 and 1
      #self.ClampGains()
+     self.ZeroRateGains()
+
+  def ZeroRateGains(self):
+    for i in range(self.num_flows):
+      for j in range(self.num_meas):
+        self.G[i,j] = 0.0
 
   def GainScale(self):
   # This function scales all gains by the argument value
@@ -340,6 +347,30 @@ class StateMachine(object):
      temp3 = np.dot(self.G, self.residual)
      self.s = self.s_pred + temp3
 
+  def Updatestor2(self):
+     # copy measured to end of state vector
+     #print('z is here')
+     #print(self.z)
+     for i in range(self.num_meas):
+       self.s[self.num_flows + i] = self.z[i]
+     # Estimate rates here   
+     self.UpdateRate()
+     #print('The state vector is here')
+     #print(self.s)
+     self.prev_z = self.z.copy()
+
+  # Estimation for Rate Value
+  def UpdateRate(self):
+    time_diff = self.curr_time - self.prev_time
+    rate = np.zeros((self.num_flows,1))
+    for i in range(self.num_flows):
+      for j in range(self.num_switches):
+        diff = self.z[i + j*self.num_flows] - self.prev_z[i + j*self.num_flows]
+        if diff > rate[i]:
+          rate[i] = diff
+      self.s[i] = rate[i] / time_diff
+    
+
   # Equation 15 -- Update State Covariance
   def UpdateP(self):  
      Ivec = np.eye(self.size_state_vec,self.size_state_vec)
@@ -350,8 +381,6 @@ class StateMachine(object):
   # Equation 13 (modified) -- This returns new gain based on input measurement matrix
   def CalculateG(self, Htilde):
      # This is also the numerator
-     #print("Here is Htilde")
-     #print(Htilde)
      temp = np.dot(self.P, Htilde.T)
      numer = temp
      # This calculates the denominator
@@ -424,7 +453,7 @@ class StateMachine(object):
     self.CompensateGain()
 
     # Calculate Eq 14
-    self.Updatestor()
+    self.Updatestor2()
 
     # Calculate Eq 15
     self.UpdateP()
@@ -536,8 +565,15 @@ def TwoSwitchThreeHost(s):
     s.AddRouteForRouteMatrix(switchNo=2, HostSrc=2, HostDst=3)
     s.AddRouteForRouteMatrix(switchNo=2, HostSrc=3, HostDst=2)
 
-def GetMeasurementsOneSwitchTwoHost(iteration):
-    return np.array([[3.6],[0]])
+def GetMeasurementsOneSwitchTwoHost(iteration, type):
+   if type == 1:
+     if iteration == 0:
+       return np.array([[3.6],[0]])
+     else:
+       return np.array([[0.0],[0]])
+   elif type == 2:
+       return np.array([[2.5],[0]])
+       
 
 
 # This writes the F matrix to file
@@ -660,10 +696,11 @@ if __name__ == '__main__':
     # Step 2:  Update measurement code here to handle varying rate input  
     print("Update the measurements here")
     if noSwitches == 1 and noHosts == 2:
-      measurements = GetMeasurementsOneSwitchTwoHost(iteration)
+      measurements = GetMeasurementsOneSwitchTwoHost(iteration,1)
       print('The measured flow stats are')
       print(measurements)
-      #measurements = np.array([[1.6],[0]])
+      #if iteration != 0:
+      #  measurements = np.array([[0.0],[0]])
       s.UpdateMeasurementBySwitch(measurements, switchNo=1, numHosts=noHosts)
     elif noSwitches == 2 and noHosts == 3:
       measurements1 = np.array([[1],[0],[1],[0],[1],[0]])
@@ -703,13 +740,16 @@ if __name__ == '__main__':
     #print("The State Vector before update")
     #print(s.ReturnStateResult())
     #print("Update State here")
+    #print(s.s)
     s.Updatestor()
+    #print("After Update State here")
+    #print(s.s)
     updateSV = s.ReturnStateResult()
     writeStateVector(s,predictSV,updateSV,sVector)
     #print(s.ReturnStateResult())
 
     # write residual vector to file
-    writeResidualVector(s,resVector)
+    #writeResidualVector(s,resVector)
 
     # Check state covariance update
     #print("The State Covar before update")
