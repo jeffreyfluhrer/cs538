@@ -37,22 +37,23 @@ class StateMachine(object):
     # |....m|..........j..............
 
     # upper left matrix size -> self.num_flow by self.num_flow
-    # d = (1 - scale_down) * flow_pnoise_mult
+    # d = (1 - scale_down1) * flow_pnoise_mult
     # l = flow_pnoise_mult
     # upper right matrix size -> self.num_flows by self.num_meas
-    # m = (1 - scale_down) * self.cross_pnoise_mult
+    # m = (1 - scale_down1) * self.cross_pnoise_mult
     # n = self.cross_pnoise_mult
     # lower left matrix size -> self.num_meas by num_flow
-    # j = (1 - scale_down) * self.cross_pnoise_mult
+    # j = (1 - scale_down1) * self.cross_pnoise_mult
     # k = self.cross_pnoise_mult
     # upper left matrix size -> self.num_meas by self.num_meas
-    # d = (1 - scale_down) * self.meas_pnoise_mult
+    # d = (1 - scale_down2) * self.meas_pnoise_mult
     # l = self.meas_pnoise_mult
     self.flow_pnoise_mult = 100
-    self.cross_pnoise_mult = 4
+    self.cross_pnoise_mult = 0.1
     self.flow_meas_pnoise_mult = 2
     self.meas_pnoise_mult = 1.0
-    self.pnoise_diag_scale_down = 0.95
+    self.pnoise_diag_scale_down1 = 0.995
+    self.pnoise_diag_scale_down2 = 0.5
     # This truly initializes the routing matrix
     self.all_zeros = True
 
@@ -176,6 +177,9 @@ class StateMachine(object):
   def DefineRoutingMatrix(self, route_matrix):
      self.route_matrix = route_matrix
 
+  # This routine modifies the route matrix based on flow detections at the switch
+  # The purpose of the route matrix is to ensure that an flow rate prediction is applied to a flow stat
+  # Note: The route matrix is the lower left matrix in the transition matrix
   def AddRouteForRouteMatrix(self, switchNo, HostSrc, HostDst):
      counter = 0
      for i in range(self.num_hosts):
@@ -242,19 +246,19 @@ class StateMachine(object):
     
   def InitQ(self):
     # Init upper left corner -- num_flow x num_flow
-    upper_left1 = np.eye(self.num_flows) * self.pnoise_diag_scale_down
+    upper_left1 = np.eye(self.num_flows) * self.pnoise_diag_scale_down1
     upper_left2 = np.ones((self.num_flows, self.num_flows)) - upper_left1
     upper_left2 = upper_left2 * self.flow_pnoise_mult
     # Init upper right corner -- num_flow x num_meas  
     #upper_right = np.ones((self.num_flows, self.num_meas)) * self.flow_meas_pnoise_mult
-    upper_right1 = np.eye(self.num_flows) * self.pnoise_diag_scale_down
+    upper_right1 = np.eye(self.num_flows) * self.pnoise_diag_scale_down1
     upper_right2 = np.ones((self.num_flows, self.num_flows)) - upper_right1
     upper_right2 = upper_right2 * self.cross_pnoise_mult
     upper_right = upper_right2
     for i in range(self.num_switches - 1):
       upper_right = np.concatenate((upper_right, upper_right2), axis=1)
     lower_left = upper_right.T
-    lower_right1 = np.eye(self.num_meas) * self.pnoise_diag_scale_down
+    lower_right1 = np.eye(self.num_meas) * self.pnoise_diag_scale_down2
     lower_right2 = np.ones((self.num_meas, self.num_meas)) - lower_right1
     lower_right2 = lower_right2 * self.meas_pnoise_mult  
     comp1 = np.concatenate((upper_left2, upper_right), axis=1)
@@ -331,20 +335,10 @@ class StateMachine(object):
 
   # Equation 14 -- Update State Vector
   def Updatestor(self):
-     #print("Here is the prediction")
-     #print(self.s_pred)
      temp = np.dot(self.H, self.s_pred)
-     #print("Here is the temp")
-     #print(temp)
-     temp2 = self.z - temp
-     temp3 = np.dot(self.G, temp2)
-     #print("Here is the temp3")
-     #print(temp3)
+     self.residual = self.z - temp
+     temp3 = np.dot(self.G, self.residual)
      self.s = self.s_pred + temp3
-     #print("Here is the measurement made")
-     #print(self.z)
-     #print("Here is the result")
-     #print(self.s)
 
   # Equation 15 -- Update State Covariance
   def UpdateP(self):  
@@ -542,17 +536,98 @@ def TwoSwitchThreeHost(s):
     s.AddRouteForRouteMatrix(switchNo=2, HostSrc=2, HostDst=3)
     s.AddRouteForRouteMatrix(switchNo=2, HostSrc=3, HostDst=2)
 
+def GetMeasurementsOneSwitchTwoHost(iteration):
+    return np.array([[3.6],[0]])
+
+
+# This writes the F matrix to file
+def writeFMatrix(s,f):
+  f.write('Timestep = ' + str(s.curr_time) + '\n')
+  f.write('----------- Start F matrix here -----------------------\n')
+  # Loop over F matrix 
+  for i in range(s.size_state_vec):
+    for j in range(s.size_state_vec):
+      f.write(str(s.F[i,j]) + ' ')
+    f.write('\n')
+  f.write('----------- End F matrix here -----------------------\n')
+
+# This writes the H matrix to file
+def writeHMatrix(s,h,f):
+  f.write('Timestep = ' + str(s.curr_time) + '\n')
+  f.write('----------- Start H matrix here -----------------------\n')
+  # Loop over H matrix 
+  for i in range(s.num_meas):
+    for j in range(s.size_state_vec):
+      f.write(str(h[i,j]) + ' ')
+    f.write('\n')
+  f.write('----------- End H matrix here -----------------------\n')
+
+
+def writeCovarMatrix(s,covarMat,f,title):
+  f.write('Timestep = ' + str(s.curr_time) + '\n')
+  f.write('----------- Start ' + title + ' Covar matrix here -----------------------\n')
+  # Loop over covar matrix 
+  for i in range(s.size_state_vec):
+    for j in range(s.size_state_vec):
+#      f.write(str(covarMat[i,j]) + '\t')
+      f.write("%.2f" %covarMat[i,j] + '\t')
+    f.write('\n')
+  f.write('----------- End ' + title + ' Covar matrix here -----------------------\n')
+
+def writeGainMatrix(s,gain,f):
+  f.write('Timestep = ' + str(s.curr_time) + '\n')
+  f.write('----------- Start Gain matrix here -----------------------\n')
+  # Loop over covar matrix 
+  for i in range(s.size_state_vec):
+    for j in range(s.num_meas):
+      f.write("%.2f" %gain[i,j] + '\t')
+    f.write('\n')
+  f.write('----------- End Gain matrix here -----------------------\n')
+
+def writeStateVector(s,predSV,updSV,f):
+  f.write('Timestep = ' + str(s.curr_time) + '\n')
+  f.write('------- Predict left ----- Update Right ----------------\n')
+  # Loop over SVs 
+  for i in range(s.size_state_vec):
+    f.write('\t' + "%.2f" %predSV[i,0] + '\t\t\t' + "%.2f" %updSV[i,0])   
+    f.write('\n')
+  f.write('---------------- End SVs here -----------------------\n')
+
+def writeResidualVector(s,f):
+  f.write('Timestep = ' + str(s.curr_time) + '\n')
+  f.write('------- Residual Vector ----------------\n')
+  # Loop over vector 
+  for i in range(s.num_meas):
+    f.write('\t' + "%.2f" %s.residual[i,0])   
+    f.write('\n')
+  f.write('---------------- End Residual here -----------------------\n')
+
 # The purpose of this is to debug the Kalman filtering
+# TODO:  Place a loop in here and store all vectors and matrices in separate files 
 if __name__ == '__main__':
   # This initializes the simpliest meaningful case
   noSwitches = 1
   noHosts = 2 
   noFlows = noHosts * (noHosts - 1)
   noMeas = noFlows * noSwitches
+  initTime = 0.0
+  nextTime = 1.0
+  timeStep = 1.0
+  numLoops = 20
   s = StateMachine(num_switches=noSwitches,num_hosts=noHosts)
   print("State machine created with " + str(noSwitches) + " switches and " + str(noHosts) + " hosts")
-  s.InitFixTime(0.0)
+  s.InitFixTime(initTime)
   print("Time initialized")
+
+  # Open file descriptors here
+  fMatrix=open('/home/jeffrey/minitest/internal/F_matrix', 'w')
+  sVector=open('/home/jeffrey/minitest/internal/s_vector', 'w')
+  predCovarMatrix=open('/home/jeffrey/minitest/internal/pred_covar_matrix', 'w')
+  updateCovarMatrix=open('/home/jeffrey/minitest/internal/upd_covar_matrix', 'w')
+  hMatrix=open('/home/jeffrey/minitest/internal/h_matrix', 'w')
+  gMatrix=open('/home/jeffrey/minitest/internal/g_matrix', 'w')
+  resVector=open('/home/jeffrey/minitest/internal/r_vector', 'w')
+
 
   # Check Transition Matrix Definition
   #s.DefineRoutingMatrix(CalculateSimpleTopo())
@@ -565,86 +640,96 @@ if __name__ == '__main__':
   elif noSwitches == 2 and noHosts == 3:
     TwoSwitchThreeHost(s)  
 
-  #print("Proper Routing Matrix installed")
-  #print ("The current state transition matrix is ")
-  #print (s.F)
-  next_time = 2
-  #print ("Update time here to " + str(next_time))
-  s.FixTime(next_time)
-  s.CalcF(next_time - s.prev_time)
-  print ("The first calculated state transition matrix is ")
-  print (s.F)
-
-  # Check measurement update  
-  print("Update the measurements here")
-  if noSwitches == 1 and noHosts == 2:
-    measurements = np.array([[2.1],[0]])
-    s.UpdateMeasurementBySwitch(measurements, switchNo=1, numHosts=noHosts)
-  elif noSwitches == 2 and noHosts == 3:
-    measurements1 = np.array([[1],[0],[1],[0],[1],[0]])
-    measurements2 = np.array([[0],[0],[0],[0],[1],[0]])
-    s.UpdateMeasurementBySwitch(measurements1, switchNo=1, numHosts=noHosts)
-    s.UpdateMeasurementBySwitch(measurements2, switchNo=2, numHosts=noHosts)
-  else:
-    measurements = np.zeros((noMeas,1))
-    s.UpdateMeasurementBySwitch(measurements, switchNo=noSwitches, numHosts=noHosts)
-
-  print(s.z)
-
-  # Check state vector prediction
-  # Initialize the state vector to a non-zero state for the one switch, two host case
   if noSwitches == 1 and noHosts == 2:
     s.s = np.array([[1],[0],[0.5],[0]])
-  print("The State Vector before prediction")
-  print(s.ReturnStateResult())
-  print("Predict State here")
-  s.PredictState()
-  print(s.ReturnStatePredict())
+    print('Initialize the state vector!!')
 
-  # Check state covariance
-  print("The State Covar before prediction")
-  print(s.ReturnPResult())
-  print("Predict State Covar here")
-  s.PredictCovar()
-  print(s.ReturnPResult())
+  for iteration in range(numLoops):
+    # This is where the loop should start
+    # Set current time
+    s.FixTime(nextTime)
+    print("The time diff is " + str(s.curr_time - s.prev_time))
 
-  # The Process Noise matrix
-  print("The process noise matrix")
-  print(s.ReturnQ())
+    # Step 1:  Calculate State Trans Matrix
+    s.CalcF(nextTime - s.prev_time)
+    # Increment nextTime here in case looping should occur
+    nextTime = nextTime + timeStep
+    writeFMatrix(s,fMatrix)
 
-  # The Measurement Noise matrix
-  print("The measurement noise matrix")
-  print(s.ReturnMeasNoise())
 
-  #Check the measurement matrix
-  print("The Measurement Matrix")
-  print(s.ReturnH())
+    # Step 2:  Update measurement code here to handle varying rate input  
+    print("Update the measurements here")
+    if noSwitches == 1 and noHosts == 2:
+      measurements = GetMeasurementsOneSwitchTwoHost(iteration)
+      print('The measured flow stats are')
+      print(measurements)
+      #measurements = np.array([[1.6],[0]])
+      s.UpdateMeasurementBySwitch(measurements, switchNo=1, numHosts=noHosts)
+    elif noSwitches == 2 and noHosts == 3:
+      measurements1 = np.array([[1],[0],[1],[0],[1],[0]])
+      measurements2 = np.array([[0],[0],[0],[0],[1],[0]])
+      s.UpdateMeasurementBySwitch(measurements1, switchNo=1, numHosts=noHosts)
+      s.UpdateMeasurementBySwitch(measurements2, switchNo=2, numHosts=noHosts)
+    else:
+      measurements = np.zeros((noMeas,1))
+      s.UpdateMeasurementBySwitch(measurements, switchNo=noSwitches, numHosts=noHosts)
 
-  # Check gain matrix
-  print("The Gain Matrix before prediction")
-  print(s.ReturnGainResult())
-  print("Predict Gain here")
-  s.UpdateG()
-  print(s.ReturnGainResult())
-  #s.CompensateGain()
-  #print("Compensated Gain Matrix for time diff")  
-  #print(s.ReturnGainResult())
+    # Step 1:  State vector prediction
+    s.PredictState()
+    predictSV = s.s_pred
 
-  # Check state vector update
-  print("The State Vector before update")
-  print(s.ReturnStateResult())
-  print("Update State here")
-  s.Updatestor()
-  print(s.ReturnStateResult())
+    # Step 2:  State covariance prediction
+    s.PredictCovar()
 
-  # Check state covariance update
-  print("The State Covar before update")
-  print(s.ReturnPResult())
-  print("Update State Covar here")
-  s.UpdateP()
-  print(s.ReturnPResult()) 
+    # The Process Noise matrix
+    #print("The process noise matrix")
+    #print(s.ReturnQ())
 
-  s.CalculateHbyEntropy()
-  print("The New Measurement Matrix")
-  print(s.ReturnH())
-   
+    # The Measurement Noise matrix
+    #print("The measurement noise matrix")
+    #print(s.ReturnMeasNoise())
+
+    # Step 3:  Write the Measurement Matrix
+    h = s.ReturnH()
+    writeHMatrix(s,h,hMatrix)
+
+    # Step 4:  Calculate and Write the gain matrix
+    s.UpdateG()
+    g = s.ReturnGainResult()
+    writeGainMatrix(s,g,gMatrix)
+
+    # Check state vector update
+    # TODO:  Save the predicted state vector, compute update and store both to file
+    #print("The State Vector before update")
+    #print(s.ReturnStateResult())
+    #print("Update State here")
+    s.Updatestor()
+    updateSV = s.ReturnStateResult()
+    writeStateVector(s,predictSV,updateSV,sVector)
+    #print(s.ReturnStateResult())
+
+    # write residual vector to file
+    writeResidualVector(s,resVector)
+
+    # Check state covariance update
+    #print("The State Covar before update")
+    #print(s.ReturnPResult())
+    #print("Update State Covar here")
+    # TODO:  Output both predicted and update state covar to file
+    writeCovarMatrix(s,s.ReturnPResult(),predCovarMatrix,'Predicted')
+    s.UpdateP()
+    writeCovarMatrix(s,s.ReturnPResult(),updateCovarMatrix,'Updated')
+    #print(s.ReturnPResult()) 
+
+    #s.CalculateHbyEntropy()
+    #print("The New Measurement Matrix")
+    #print(s.ReturnH())
+  
+  # close files
+  fMatrix.close()
+  sVector.close()
+  predCovarMatrix.close()
+  updateCovarMatrix.close()
+  hMatrix.close()
+  gMatrix.close()   
+  resVector.close()
