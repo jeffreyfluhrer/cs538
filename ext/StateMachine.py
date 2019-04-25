@@ -12,7 +12,8 @@ class StateMachine(object):
     self.num_hosts = num_hosts
     # Note:  The switch selection is hardcoded to use only half the total number of switches
     # TODO:  Make this more general
-    self.switch_limit = self.num_switches / 2
+    if self.num_switches > 1:
+      self.switch_limit = self.num_switches / 2
     self.stateCovarMult = 0.001
     self.measCovarMult = 0.1
     self.processNoiseMult = 0.001
@@ -214,7 +215,7 @@ class StateMachine(object):
          #print(Hstar)
          new_h = self.EstimateEntropy(Htilde)
          if new_h < curr_h:
-           Hhat = Htilde
+           Hhat = Htilde.copy()
            curr_h = new_h
        Hstar = Hhat
     self.H = Hstar  
@@ -311,7 +312,7 @@ class StateMachine(object):
      #self.GainScale()
      # TODO:  Loop over all gain terms and limit them between 0 and 1
      #self.ClampGains()
-     self.ZeroRateGains()
+     #self.ZeroRateGains()
 
   def ZeroRateGains(self):
     for i in range(self.num_flows):
@@ -459,7 +460,7 @@ class StateMachine(object):
     self.UpdateP()
 
     # Clear the measurement vector to start measurement update from scratch
-    self.z = np.zeros((self.num_meas,1))
+    #self.z = np.zeros((self.num_meas,1))
 
   # This outputs the state vector to a file output for later post-processing
   # TODO:  Finish this method up
@@ -650,6 +651,8 @@ if __name__ == '__main__':
   nextTime = 1.0
   timeStep = 1.0
   numLoops = 20
+  updateMode = 1  # 1 = Updatestor and 2 = Updatestor2
+  useEntropy = False # Determines whether to select partial switches or not
   s = StateMachine(num_switches=noSwitches,num_hosts=noHosts)
   print("State machine created with " + str(noSwitches) + " switches and " + str(noHosts) + " hosts")
   s.InitFixTime(initTime)
@@ -684,19 +687,19 @@ if __name__ == '__main__':
     # This is where the loop should start
     # Set current time
     s.FixTime(nextTime)
+    # Increment nextTime here in case looping should occur
+    nextTime = nextTime + timeStep
     print("The time diff is " + str(s.curr_time - s.prev_time))
 
     # Step 1:  Calculate State Trans Matrix
-    s.CalcF(nextTime - s.prev_time)
-    # Increment nextTime here in case looping should occur
-    nextTime = nextTime + timeStep
+    s.CalcF(s.curr_time - s.prev_time)
     writeFMatrix(s,fMatrix)
 
 
     # Step 2:  Update measurement code here to handle varying rate input  
     print("Update the measurements here")
     if noSwitches == 1 and noHosts == 2:
-      measurements = GetMeasurementsOneSwitchTwoHost(iteration,1)
+      measurements = GetMeasurementsOneSwitchTwoHost(iteration,2)
       print('The measured flow stats are')
       print(measurements)
       #if iteration != 0:
@@ -737,19 +740,17 @@ if __name__ == '__main__':
 
     # Check state vector update
     # TODO:  Save the predicted state vector, compute update and store both to file
-    #print("The State Vector before update")
-    #print(s.ReturnStateResult())
-    #print("Update State here")
-    #print(s.s)
-    s.Updatestor()
-    #print("After Update State here")
-    #print(s.s)
+    if updateMode == 1:
+      s.Updatestor()
+      # write residual vector to file
+      writeResidualVector(s,resVector)
+    else:
+      s.Updatestor2()    
     updateSV = s.ReturnStateResult()
     writeStateVector(s,predictSV,updateSV,sVector)
     #print(s.ReturnStateResult())
 
-    # write residual vector to file
-    #writeResidualVector(s,resVector)
+
 
     # Check state covariance update
     #print("The State Covar before update")
@@ -761,7 +762,8 @@ if __name__ == '__main__':
     writeCovarMatrix(s,s.ReturnPResult(),updateCovarMatrix,'Updated')
     #print(s.ReturnPResult()) 
 
-    #s.CalculateHbyEntropy()
+    if useEntropy:
+      s.CalculateHbyEntropy()
     #print("The New Measurement Matrix")
     #print(s.ReturnH())
   
