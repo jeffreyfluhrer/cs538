@@ -1,6 +1,7 @@
 import numpy as np
 from numpy.linalg import inv
 import time
+import random
 
 class StateMachine(object):
 
@@ -454,7 +455,7 @@ class StateMachine(object):
     self.CompensateGain()
 
     # Calculate Eq 14
-    self.Updatestor2()
+    self.Updatestor()
 
     # Calculate Eq 15
     self.UpdateP()
@@ -566,6 +567,12 @@ def TwoSwitchThreeHost(s):
     s.AddRouteForRouteMatrix(switchNo=2, HostSrc=2, HostDst=3)
     s.AddRouteForRouteMatrix(switchNo=2, HostSrc=3, HostDst=2)
 
+def TwoSwitchTwoHost(s):
+    s.AddRouteForRouteMatrix(switchNo=1, HostSrc=1, HostDst=2)
+    s.AddRouteForRouteMatrix(switchNo=1, HostSrc=2, HostDst=1)
+    s.AddRouteForRouteMatrix(switchNo=2, HostSrc=1, HostDst=2)
+    s.AddRouteForRouteMatrix(switchNo=2, HostSrc=2, HostDst=1)
+
 def GetMeasurementsOneSwitchTwoHost(iteration, type):
    if type == 1:
      if iteration == 0:
@@ -574,7 +581,58 @@ def GetMeasurementsOneSwitchTwoHost(iteration, type):
        return np.array([[0.0],[0]])
    elif type == 2:
        return np.array([[2.5],[0]])
-       
+   # Generate ramps here
+   elif type == 3:
+     if iteration > 0 and iteration < 10:
+        return np.array([[0.0],[0]])   
+     elif iteration >= 10 and iteration < 15:
+        value = ((iteration - 10.0)/5.0) * 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])   
+     elif iteration >= 15 and iteration < 30:
+        value = 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])   
+     elif iteration >= 30 and iteration < 35:
+        value = 10000.0 - ((iteration - 30.0)/5.0) * 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])
+     elif iteration >= 35 and iteration < 50:
+       return np.array([[0.0],[0]])
+     elif iteration >= 50 and iteration < 55:
+        value = ((iteration - 50.0)/5.0) * 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])   
+     elif iteration >= 55 and iteration < 70:
+        value = 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])   
+     elif iteration >= 70 and iteration < 75:
+        value = 10000.0 - ((iteration - 70.0)/5.0) * 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])
+     else:
+        return np.array([[0.0],[0]])           
+   # Generate bursts here
+   elif type == 4:
+     if iteration > 0 and iteration < 10:
+        return np.array([[0.0],[0]])   
+     elif iteration >= 10 and iteration < 12:
+        value = 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])   
+     elif iteration >= 12 and iteration < 20:
+        return np.array([[0.0],[0]])  
+     elif iteration >= 20 and iteration < 22:
+        value = 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])   
+     elif iteration >= 22 and iteration < 30:
+       return np.array([[0.0],[0]])
+     elif iteration >= 30 and iteration < 32:
+        value = 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])    
+     elif iteration >= 32 and iteration < 40:
+       return np.array([[0.0],[0]])  
+     elif iteration >= 40 and iteration < 42:
+        value = 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])    
+     elif iteration >= 42 and iteration < 50:
+       return np.array([[0.0],[0]])  
+     else:
+        return np.array([[0.0],[0]]) 
 
 
 # This writes the F matrix to file
@@ -639,6 +697,12 @@ def writeResidualVector(s,f):
     f.write('\n')
   f.write('---------------- End Residual here -----------------------\n')
 
+def writeStateResult(f,sv,time, comps):
+  f.write('\t' + "%.2f" %time)
+  for i in comps:
+    f.write('\t' + "%.2f" %sv[i])
+  f.write('\n')
+
 # The purpose of this is to debug the Kalman filtering
 # TODO:  Place a loop in here and store all vectors and matrices in separate files 
 if __name__ == '__main__':
@@ -650,9 +714,10 @@ if __name__ == '__main__':
   initTime = 0.0
   nextTime = 1.0
   timeStep = 1.0
-  numLoops = 20
-  updateMode = 1  # 1 = Updatestor and 2 = Updatestor2
+  numLoops = 60
+  updateMode = 2  # 1 = Updatestor and 2 = Updatestor2
   useEntropy = False # Determines whether to select partial switches or not
+  inputType = 4 # 1 = step, 2 = ramp, 3 = rounded boxcars, 4 = bursts
   s = StateMachine(num_switches=noSwitches,num_hosts=noHosts)
   print("State machine created with " + str(noSwitches) + " switches and " + str(noHosts) + " hosts")
   s.InitFixTime(initTime)
@@ -666,6 +731,7 @@ if __name__ == '__main__':
   hMatrix=open('/home/jeffrey/minitest/internal/h_matrix', 'w')
   gMatrix=open('/home/jeffrey/minitest/internal/g_matrix', 'w')
   resVector=open('/home/jeffrey/minitest/internal/r_vector', 'w')
+  sResult=open('/home/jeffrey/minitest/internal/s_result', 'w')
 
 
   # Check Transition Matrix Definition
@@ -677,8 +743,10 @@ if __name__ == '__main__':
   elif noSwitches == 1 and noHosts == 2:
     OneSwitchTwoHost(s)
   elif noSwitches == 2 and noHosts == 3:
-    TwoSwitchThreeHost(s)  
-
+    TwoSwitchThreeHost(s)
+  elif noSwitches == 2 and noHosts == 2:  
+    TwoSwitchTwoHost(s)
+    
   if noSwitches == 1 and noHosts == 2:
     s.s = np.array([[1],[0],[0.5],[0]])
     print('Initialize the state vector!!')
@@ -699,17 +767,21 @@ if __name__ == '__main__':
     # Step 2:  Update measurement code here to handle varying rate input  
     print("Update the measurements here")
     if noSwitches == 1 and noHosts == 2:
-      measurements = GetMeasurementsOneSwitchTwoHost(iteration,2)
+      measurements = GetMeasurementsOneSwitchTwoHost(iteration,inputType)
       print('The measured flow stats are')
       print(measurements)
-      #if iteration != 0:
-      #  measurements = np.array([[0.0],[0]])
       s.UpdateMeasurementBySwitch(measurements, switchNo=1, numHosts=noHosts)
     elif noSwitches == 2 and noHosts == 3:
       measurements1 = np.array([[1],[0],[1],[0],[1],[0]])
       measurements2 = np.array([[0],[0],[0],[0],[1],[0]])
       s.UpdateMeasurementBySwitch(measurements1, switchNo=1, numHosts=noHosts)
       s.UpdateMeasurementBySwitch(measurements2, switchNo=2, numHosts=noHosts)
+    if noSwitches == 2 and noHosts == 2:
+      measurements = GetMeasurementsOneSwitchTwoHost(iteration,inputType)
+      print('The measured flow stats are')
+      print(measurements)
+      s.UpdateMeasurementBySwitch(measurements, switchNo=1, numHosts=noHosts)
+      s.UpdateMeasurementBySwitch(measurements, switchNo=2, numHosts=noHosts)
     else:
       measurements = np.zeros((noMeas,1))
       s.UpdateMeasurementBySwitch(measurements, switchNo=noSwitches, numHosts=noHosts)
@@ -748,6 +820,8 @@ if __name__ == '__main__':
       s.Updatestor2()    
     updateSV = s.ReturnStateResult()
     writeStateVector(s,predictSV,updateSV,sVector)
+    # output state vector result here
+    writeStateResult(sResult,updateSV,s.curr_time,[0])
     #print(s.ReturnStateResult())
 
 
@@ -775,3 +849,4 @@ if __name__ == '__main__':
   hMatrix.close()
   gMatrix.close()   
   resVector.close()
+  sResult.close()
