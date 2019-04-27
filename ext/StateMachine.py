@@ -11,6 +11,10 @@ class StateMachine(object):
     # This is metadata
     self.num_switches = num_switches
     self.num_hosts = num_hosts
+    self.updateThres = 5000.0
+    self.BurstState = False
+    self.BurstDuration = 40
+    self.prev_rate = 0.0
     # Note:  The switch selection is hardcoded to use only half the total number of switches
     # TODO:  Make this more general
     if self.num_switches > 1:
@@ -348,11 +352,9 @@ class StateMachine(object):
      self.residual = self.z - temp
      temp3 = np.dot(self.G, self.residual)
      self.s = self.s_pred + temp3
+     self.prev_z = self.z.copy()
 
   def Updatestor2(self):
-     # copy measured to end of state vector
-     #print('z is here')
-     #print(self.z)
      for i in range(self.num_meas):
        self.s[self.num_flows + i] = self.z[i]
      # Estimate rates here   
@@ -360,6 +362,30 @@ class StateMachine(object):
      #print('The state vector is here')
      #print(self.s)
      self.prev_z = self.z.copy()
+
+  # This routine dithers between Updatestor and Updatestor2 based on sense of burstiness
+  def Updatestor3(self):
+     time_diff = self.curr_time - self.prev_time
+     estRate = (self.z - self.prev_z)//time_diff
+     change = estRate - self.prev_rate
+     print("change vector =")
+     print(change)
+     print(self.z)
+     print(self.prev_z)
+     changeLevel = sum(abs(change))
+     print("The changeLevel is " + str(changeLevel))
+     if changeLevel > self.updateThres or self.BurstState:
+       print("TRIGGERED BURST DETECTION!!")
+       if not self.BurstState:
+         self.BurstIter = self.BurstDuration
+         self.BurstState = True
+       self.Updatestor2()
+       self.BurstIter = self.BurstIter - 1
+       if self.BurstIter == 0:
+         self.BurstState = False
+     else:
+       self.Updatestor()
+     self.prev_rate = estRate
 
   # Estimation for Rate Value
   def UpdateRate(self):
@@ -633,7 +659,38 @@ def GetMeasurementsOneSwitchTwoHost(iteration, type):
        return np.array([[0.0],[0]])  
      else:
         return np.array([[0.0],[0]]) 
-
+   # Generate mixed inputs here
+   elif type == 5:
+     if iteration > 0 and iteration < 10:
+        return np.array([[0.0],[0]])   
+     elif iteration >= 10 and iteration < 15:
+        value = ((iteration - 10.0)/5.0) * 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])   
+     elif iteration >= 15 and iteration < 30:
+        value = 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])   
+     elif iteration >= 30 and iteration < 35:
+        value = 10000.0 - ((iteration - 30.0)/5.0) * 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])
+     elif iteration >= 35 and iteration < 50:
+       return np.array([[0.0],[0]])
+     elif iteration >= 50 and iteration < 52:
+        value = 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])   
+     elif iteration >= 52 and iteration < 60:
+       return np.array([[0.0],[0]])
+     elif iteration >= 60 and iteration < 62:
+        value = 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])    
+     elif iteration >= 62 and iteration < 70:
+       return np.array([[0.0],[0]])  
+     elif iteration >= 70 and iteration < 72:
+        value = 10000.0 + 100 * random.random()
+        return np.array([[value],[0]])    
+     elif iteration >= 72 and iteration < 80:
+       return np.array([[0.0],[0]])  
+     else:
+        return np.array([[0.0],[0]]) 
 
 # This writes the F matrix to file
 def writeFMatrix(s,f):
@@ -714,10 +771,10 @@ if __name__ == '__main__':
   initTime = 0.0
   nextTime = 1.0
   timeStep = 1.0
-  numLoops = 60
-  updateMode = 2  # 1 = Updatestor and 2 = Updatestor2
+  numLoops = 80
+  updateMode = 3  # 1 = Updatestor, 2 = Updatestor2 and 3 = Updatestor3
   useEntropy = False # Determines whether to select partial switches or not
-  inputType = 4 # 1 = step, 2 = ramp, 3 = rounded boxcars, 4 = bursts
+  inputType = 5 # 1 = step, 2 = ramp, 3 = rounded boxcars, 4 = bursts, 5 = mixed boxcar and bursts
   s = StateMachine(num_switches=noSwitches,num_hosts=noHosts)
   print("State machine created with " + str(noSwitches) + " switches and " + str(noHosts) + " hosts")
   s.InitFixTime(initTime)
@@ -816,8 +873,10 @@ if __name__ == '__main__':
       s.Updatestor()
       # write residual vector to file
       writeResidualVector(s,resVector)
+    elif updateMode == 2:
+      s.Updatestor2()
     else:
-      s.Updatestor2()    
+      s.Updatestor3()    
     updateSV = s.ReturnStateResult()
     writeStateVector(s,predictSV,updateSV,sVector)
     # output state vector result here
