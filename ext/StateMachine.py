@@ -2,6 +2,7 @@ import numpy as np
 from numpy.linalg import inv
 import time
 import random
+import math
 
 class StateMachine(object):
 
@@ -206,32 +207,44 @@ class StateMachine(object):
      IdenArray = np.eye(self.num_meas)
      self.H = np.concatenate((ZeroArray,IdenArray),axis=1)
 
-  def CalculateHbyEntropy(self):
+  # TODO:  Implement switchList return
+  def CalculateHbyEntropy(self, switch_limit):
+    switchList = []
     # Create empty matrix
     Hstar = np.zeros((self.num_meas,self.num_meas + self.num_flows))
     # Limit the number of switches to include in the measurement matrix to self.switch_limit
-    for i in range(self.switch_limit):
-       #print("Adding switch number " + str(i))
+    for i in range(switch_limit):
+       print("Adding switch number " + str(i))
        curr_h = self.EstimateEntropy(Hstar)
-       Hhat = Hstar
+       print('Estimated ent = ' + str(curr_h))
+       Hhat = Hstar.copy()
+       currentSwitch = 0
        for j in range(self.num_switches):
          Htilde = self.AddSwitch2Measurement(Hstar.copy(), j)
          #print("Hstar is here")
          #print(Hstar)
          new_h = self.EstimateEntropy(Htilde)
+         print('New ent = ' + str(new_h))
          if new_h < curr_h:
            Hhat = Htilde.copy()
            curr_h = new_h
+           currentSwitch = j
        Hstar = Hhat
-    self.H = Hstar  
+       switchList.append(currentSwitch)
+    self.H = Hstar
+    return switchList  
            
   # Compute the estimated process covariance using input Htilde and then estimate entropy (just determinant)
   def EstimateEntropy(self, Htilde):
     # calculate new gain here
     Gnew = self.CalculateG(Htilde)
+    print(Gnew)
     Pnew = self.CalculateP(Gnew, Htilde)
+    determ = np.linalg.det(Pnew)
+    #print("The determinant is " + str(determ))
     # return the determinant of the matrix
-    return np.linalg.det(Pnew)   
+    return determ
+    #return math.log(determ)   
 
   def AddSwitch2Measurement(self, Hstar, switchNo):
     #print("The switch number = " + str(switchNo))
@@ -250,7 +263,7 @@ class StateMachine(object):
       for i in range(self.num_switches - 1):
         temp = np.concatenate((temp,flow_mat),axis=0)
     return temp
-    
+
   def InitQ(self):
     # Init upper left corner -- num_flow x num_flow
     upper_left1 = np.eye(self.num_flows) * self.pnoise_diag_scale_down1
@@ -368,12 +381,12 @@ class StateMachine(object):
      time_diff = self.curr_time - self.prev_time
      estRate = (self.z - self.prev_z)//time_diff
      change = estRate - self.prev_rate
-     print("change vector =")
-     print(change)
-     print(self.z)
-     print(self.prev_z)
+     #print("change vector =")
+     #print(change)
+     #print(self.z)
+     #print(self.prev_z)
      changeLevel = sum(abs(change))
-     print("The changeLevel is " + str(changeLevel))
+     #print("The changeLevel is " + str(changeLevel))
      if changeLevel > self.updateThres or self.BurstState:
        print("TRIGGERED BURST DETECTION!!")
        if not self.BurstState:
@@ -415,7 +428,9 @@ class StateMachine(object):
      temp1 = np.dot(Htilde, temp)
      temp2 = self.R + temp1
      denom = inv(temp2)
-     return np.dot(numer,denom)
+     G = np.dot(numer,denom)
+     G = self.ClampCalcGains(G)
+     return G
 
   # Equation 15 (modified)-- Returns State Covariance based on input measurement matrix and Gain
   def CalculateP(self, Gmod, Htilde):  
@@ -423,6 +438,16 @@ class StateMachine(object):
      temp = np.dot(Gmod, Htilde)
      temp2 = Ivec - temp
      return np.dot(temp2, self.P)
+
+  # This function fixes the gain terms between 0.0 and 1.0
+  def ClampCalcGains(self,G):
+     for i in range(self.size_state_vec):
+       for j in range(self.num_meas):
+         if G[i,j] > 1.0:
+           G[i,j] = 1.0
+         if G[i,j] < 0.0:
+           G[i,j] = 0.0
+     return G
 
  # -----------------------------------------------------------------------------
  # -----------------------------------------------------------------------------
@@ -600,11 +625,13 @@ def TwoSwitchTwoHost(s):
     s.AddRouteForRouteMatrix(switchNo=2, HostSrc=2, HostDst=1)
 
 def GetMeasurementsOneSwitchTwoHost(iteration, type):
+   # Constant uniflow step
    if type == 1:
      if iteration == 0:
        return np.array([[3.6],[0]])
      else:
        return np.array([[0.0],[0]])
+   # Constant uniflow ramp
    elif type == 2:
        return np.array([[2.5],[0]])
    # Generate ramps here
@@ -691,6 +718,9 @@ def GetMeasurementsOneSwitchTwoHost(iteration, type):
        return np.array([[0.0],[0]])  
      else:
         return np.array([[0.0],[0]]) 
+   # Constant biflow ramp
+   elif type == 6:
+       return np.array([[1.0],[2.0]])
 
 # This writes the F matrix to file
 def writeFMatrix(s,f):
@@ -760,11 +790,18 @@ def writeStateResult(f,sv,time, comps):
     f.write('\t' + "%.2f" %sv[i])
   f.write('\n')
 
+def writeSwitchList(sList, time, f):
+  print(sList)
+  f.write('\t' + "%.2f" %time)
+  for i in sList:
+    f.write('\t' + str(i+1))
+  f.write('\n')  
+
 # The purpose of this is to debug the Kalman filtering
 # TODO:  Place a loop in here and store all vectors and matrices in separate files 
 if __name__ == '__main__':
   # This initializes the simpliest meaningful case
-  noSwitches = 1
+  noSwitches = 2
   noHosts = 2 
   noFlows = noHosts * (noHosts - 1)
   noMeas = noFlows * noSwitches
@@ -772,9 +809,18 @@ if __name__ == '__main__':
   nextTime = 1.0
   timeStep = 1.0
   numLoops = 80
-  updateMode = 3  # 1 = Updatestor, 2 = Updatestor2 and 3 = Updatestor3
-  useEntropy = False # Determines whether to select partial switches or not
-  inputType = 5 # 1 = step, 2 = ramp, 3 = rounded boxcars, 4 = bursts, 5 = mixed boxcar and bursts
+  updateMode = 2  # 1 = Updatestor, 2 = Updatestor2 and 3 = Updatestor3
+  useEntropy = True # Determines whether to select partial switches or not
+  numEntropySwitches = 1
+  testSwitchSelction = False
+  # Input types
+  # 1 = step 
+  # 2 = ramp
+  # 3 = rounded boxcars
+  # 4 = bursts
+  # 5 = mixed boxcar and bursts
+  # 6 = biflow ramp
+  inputType = 4 
   s = StateMachine(num_switches=noSwitches,num_hosts=noHosts)
   print("State machine created with " + str(noSwitches) + " switches and " + str(noHosts) + " hosts")
   s.InitFixTime(initTime)
@@ -789,6 +835,7 @@ if __name__ == '__main__':
   gMatrix=open('/home/jeffrey/minitest/internal/g_matrix', 'w')
   resVector=open('/home/jeffrey/minitest/internal/r_vector', 'w')
   sResult=open('/home/jeffrey/minitest/internal/s_result', 'w')
+  switchSelected=open('/home/jeffrey/minitest/internal/switchPicked', 'w')
 
 
   # Check Transition Matrix Definition
@@ -814,7 +861,8 @@ if __name__ == '__main__':
     s.FixTime(nextTime)
     # Increment nextTime here in case looping should occur
     nextTime = nextTime + timeStep
-    print("The time diff is " + str(s.curr_time - s.prev_time))
+    #print("The time diff is " + str(s.curr_time - s.prev_time))
+    print("The current time is " + str(s.curr_time))
 
     # Step 1:  Calculate State Trans Matrix
     s.CalcF(s.curr_time - s.prev_time)
@@ -825,8 +873,8 @@ if __name__ == '__main__':
     print("Update the measurements here")
     if noSwitches == 1 and noHosts == 2:
       measurements = GetMeasurementsOneSwitchTwoHost(iteration,inputType)
-      print('The measured flow stats are')
-      print(measurements)
+      #print('The measured flow stats are')
+      #print(measurements)
       s.UpdateMeasurementBySwitch(measurements, switchNo=1, numHosts=noHosts)
     elif noSwitches == 2 and noHosts == 3:
       measurements1 = np.array([[1],[0],[1],[0],[1],[0]])
@@ -835,8 +883,8 @@ if __name__ == '__main__':
       s.UpdateMeasurementBySwitch(measurements2, switchNo=2, numHosts=noHosts)
     if noSwitches == 2 and noHosts == 2:
       measurements = GetMeasurementsOneSwitchTwoHost(iteration,inputType)
-      print('The measured flow stats are')
-      print(measurements)
+      #print('The measured flow stats are')
+      #print(measurements)
       s.UpdateMeasurementBySwitch(measurements, switchNo=1, numHosts=noHosts)
       s.UpdateMeasurementBySwitch(measurements, switchNo=2, numHosts=noHosts)
     else:
@@ -896,7 +944,14 @@ if __name__ == '__main__':
     #print(s.ReturnPResult()) 
 
     if useEntropy:
-      s.CalculateHbyEntropy()
+      switchList = s.CalculateHbyEntropy(numEntropySwitches)
+      print(switchList)
+      writeSwitchList(switchList, s.curr_time, switchSelected)
+    if testSwitchSelction:
+      Hstar = np.zeros((s.num_meas,s.num_meas + s.num_flows))
+      Htilde = s.AddSwitch2Measurement(Hstar, 0)
+      s.H = Htilde
+      
     #print("The New Measurement Matrix")
     #print(s.ReturnH())
   
@@ -909,3 +964,4 @@ if __name__ == '__main__':
   gMatrix.close()   
   resVector.close()
   sResult.close()
+  switchSelected.close()
